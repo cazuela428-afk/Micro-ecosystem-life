@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BacteriSim - Final English Edition</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background-color: #1a1a1a;
+            color: #eee;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .ui-panel {
+            width: 95%;
+            max-width: 850px;
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+            border: 1px solid #444;
+        }
+
+        .section-title {
+            width: 100%;
+            font-size: 0.7rem;
+            color: #888;
+            text-transform: uppercase;
+            text-align: center;
+            margin-bottom: 4px;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #444;
+        }
+
+        .btn-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 4px;
+            width: 100%;
+        }
+
+        button {
+            padding: 6px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background: #3d3d3d;
+            color: white;
+            font-size: 0.75rem;
+            transition: 0.2s;
+        }
+
+        button:hover { background: #555; }
+        button.active { background: #007bff; box-shadow: 0 0 8px #007bff; }
+        button.delete-btn { background: #633; }
+        
+        #pauseBtn { min-width: 160px; font-weight: bold; }
+        .paused { background: #28a745; }
+        .running { background: #dc3545; }
+
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.75rem;
+            background: #1f1f1f;
+            padding: 4px 10px;
+            border-radius: 4px;
+        }
+
+        #canvas-wrap {
+            position: relative;
+            margin: 10px 0;
+        }
+
+        canvas {
+            background-color: white;
+            border: 2px solid #333;
+            cursor: crosshair;
+        }
+
+        .stats-overlay {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background: rgba(0,0,0,0.7);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            pointer-events: none;
+            color: #0f0;
+        }
+
+        input[type="range"] { cursor: pointer; width: 80px; }
+    </style>
+</head>
+<body>
+
+<div class="ui-panel">
+    <div class="section-title">Simulation Control</div>
+    <button id="pauseBtn" class="paused">START SIMULATION</button>
+    <div class="slider-group">
+        <label>Viscosity</label>
+        <input type="range" id="visc" min="0.5" max="5" step="0.1" value="1">
+    </div>
+    <div class="slider-group">
+        <label>Auto-Food</label>
+        <input type="range" id="foodR" min="0" max="25" step="1" value="5">
+    </div>
+    <div class="slider-group">
+        <label>Mutation%</label>
+        <input type="range" id="mutP" min="0" max="100" step="1" value="10">
+    </div>
+</div>
+
+<div id="canvas-wrap">
+    <canvas id="sim"></canvas>
+    <div class="stats-overlay" id="stats">Loading...</div>
+</div>
+
+<div class="ui-panel">
+    <div class="section-title">Organism Selection</div>
+    <div class="btn-grid">
+        <button class="tool" data-type="herb" data-sub="blue">Herb (Blue)</button>
+        <button class="tool" data-type="herb" data-sub="green">Herb (Green)</button>
+        <button class="tool" data-type="herb" data-sub="pink">Herb (Pink)</button>
+        <button class="tool" data-type="pred" data-sub="red">Pred (Red)</button>
+        <button class="tool" data-type="pred" data-sub="orange">Pred (Orange)</button>
+        <button class="tool" data-type="pred" data-sub="purple">Pred (Purple)</button>
+        <button class="tool" data-type="fung" data-sub="brown">Fung (Brown)</button>
+        <button class="tool" data-type="fung" data-sub="yellow">Fung (Yellow)</button>
+        <button class="tool" data-type="fung" data-sub="cyan">Fung (Cyan)</button>
+        <button class="tool" data-type="plant" data-sub="standard">Plant</button>
+        <button class="tool" data-type="virus" data-sub="alpha">Virus A</button>
+        <button class="tool" data-type="virus" data-sub="beta">Virus B</button>
+        <button class="tool" data-type="virus" data-sub="gamma">Virus G</button>
+        <button class="tool" data-type="virus" data-sub="delta">Virus D</button>
+    </div>
+    <div style="display: flex; gap: 5px; width: 100%; margin-top: 8px;">
+        <button class="tool delete-btn" data-type="eraser" style="flex:1">Eraser Tool</button>
+        <button id="btn-clear-orgs" class="delete-btn" style="flex:1">Clear Organisms</button>
+        <button id="btn-clear-all" class="delete-btn" style="flex:1">Clear All</button>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('sim');
+const ctx = canvas.getContext('2d');
+const stats = document.getElementById('stats');
+
+canvas.width = 750;
+canvas.height = 380;
+
+let isPaused = true;
+let selectedTool = null;
+let organisms = [];
+let foods = [];
+
+const getViscMultiplier = () => 1 / parseFloat(document.getElementById('visc').value);
+const getParam = (id) => parseFloat(document.getElementById(id).value);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+class Organism {
+    constructor(x, y, type, sub) {
+        this.x = x; this.y = y;
+        this.type = type; this.sub = sub;
+        this.angle = Math.random() * 6.28;
+        this.energy = 100;
+        this.radius = 5;
+        this.baseSpeed = 1;
+        this.cost = 0.05;
+        this.dead = false;
+        this.init();
+    }
+
+    init() {
+        if (this.type === 'herb') {
+            this.radius = 4.5;
+            if (this.sub === 'blue') { this.baseSpeed = 1.3; this.cost = 0.05; this.color = '#3498db'; }
+            if (this.sub === 'green') { this.baseSpeed = 0.8; this.cost = 0.02; this.color = '#2ecc71'; }
+            if (this.sub === 'pink') { this.baseSpeed = 2.0; this.cost = 0.12; this.color = '#e91e63'; }
+        }
+        if (this.type === 'pred') {
+            this.radius = 6;
+            if (this.sub === 'red') { this.baseSpeed = 1; this.cost = 0.08; this.color = '#e74c3c'; }
+            if (this.sub === 'orange') { this.baseSpeed = 1.3; this.cost = 0.15; this.color = '#e67e22'; }
+            if (this.sub === 'purple') { this.baseSpeed = 0.8; this.cost = 0.08; this.color = '#9b59b6'; }
+        }
+        if (this.type === 'fung') {
+            this.radius = 5;
+            if (this.sub === 'brown') { this.baseSpeed = 0.7; this.cost = 0.02; this.color = '#795548'; }
+            if (this.sub === 'yellow') { this.baseSpeed = 1.1; this.cost = 0.05; this.color = '#f1c40f'; }
+            if (this.sub === 'cyan') { this.baseSpeed = 0.5; this.cost = 0.01; this.color = '#00bcd4'; }
+        }
+        if (this.type === 'plant') { this.radius = 3.5; this.color = '#27ae60'; this.baseSpeed = 0; this.cost = 0; this.timer = 0; }
+        if (this.type === 'virus') {
+            this.radius = 4.5; this.baseSpeed = 2.5; this.cost = 0.8;
+            const vCols = {alpha:'#ff00ff', beta:'#00ffff', gamma:'#d2b48c', delta:'#00ff00'};
+            this.color = vCols[this.sub];
+        }
+    }
+
+    update() {
+        if (isPaused || this.dead) return;
+
+        if (this.type === 'plant') {
+            this.timer++;
+            if (this.timer > 220) { this.timer = 0; this.repro(); }
+            return;
+        }
+
+        const vMult = getViscMultiplier();
+        this.energy -= this.cost;
+        if (this.energy <= 0) { this.dead = true; return; }
+
+        let target = this.getNearestTarget();
+        if (target) {
+            let angleTo = Math.atan2(target.y - this.y, target.x - this.x);
+            let diff = angleTo - this.angle;
+            while(diff < -Math.PI) diff += Math.PI * 2;
+            while(diff > Math.PI) diff -= Math.PI * 2;
+            this.angle += diff * 0.12;
+        } else {
+            this.angle += (Math.random() - 0.5) * 0.2;
+        }
+
+        let step = this.baseSpeed * vMult * 2.5;
+        let nx = this.x + Math.cos(this.angle) * step;
+        let ny = this.y + Math.sin(this.angle) * step;
+
+        let collision = this.getCollision(nx, ny);
+        
+        if (nx < this.radius || nx > canvas.width - this.radius || ny < this.radius || ny > canvas.height - this.radius) {
+            this.angle += Math.PI * 0.5;
+        } else if (!collision) {
+            this.x = nx;
+            this.y = ny;
+        } else {
+            // Anti-Spin: apply repulsion force
+            this.angle += 0.5 + Math.random(); 
+            let escapeAngle = Math.atan2(this.y - collision.y, this.x - collision.x);
+            this.x += Math.cos(escapeAngle) * 1.5;
+            this.y += Math.sin(escapeAngle) * 1.5;
+        }
+
+        if (this.energy > 200) { this.energy = 95; this.repro(); }
+    }
+
+    getNearestTarget() {
+        let pool = [];
+        if (this.type === 'herb' || this.type === 'fung') pool = [...foods, ...organisms.filter(o => o.type === 'plant')];
+        if (this.type === 'pred') pool = organisms.filter(o => o.type === 'herb' || o.type === 'fung');
+        if (this.type === 'virus') pool = organisms.filter(o => o.type !== 'plant' && o.type !== 'virus');
+
+        let best = null, minDist = 180;
+        for (let t of pool) {
+            let d = dist(this, t);
+            if (d < minDist) { minDist = d; best = t; }
+        }
+        
+        if (best && minDist < (this.radius + (best.radius || 2) + 1)) {
+            this.eat(best);
+        }
+        return best;
+    }
+
+    eat(target) {
+        if (this.type === 'virus') {
+            target.dead = true;
+            this.repro();
+        } else {
+            target.dead = true;
+            this.energy += (target.type === 'plant' || target.isFood) ? 30 : 60;
+        }
+    }
+
+    getCollision(nx, ny) {
+        for (let o of organisms) {
+            if (o === this || o.dead || o.type === 'plant') continue;
+            if (dist({x:nx, y:ny}, o) < (this.radius + o.radius)) return o;
+        }
+        return null;
+    }
+
+    repro() {
+        let sub = this.sub;
+        if (Math.random() * 100 < getParam('mutP')) {
+            const map = {herb:['blue','green','pink'], pred:['red','orange','purple'], fung:['brown','yellow','cyan'], virus:['alpha','beta','gamma','delta']};
+            if(map[this.type]) sub = map[this.type][Math.floor(Math.random()*map[this.type].length)];
+        }
+        let ox = this.x + (Math.random()-0.5)*40;
+        let oy = this.y + (Math.random()-0.5)*40;
+        if (ox > 10 && ox < canvas.width-10 && oy > 10 && oy < canvas.height-10) {
+            organisms.push(new Organism(ox, oy, this.type, sub));
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        if (this.type === 'herb') {
+            ctx.rotate(this.angle);
+            ctx.roundRect(-7, -3.5, 14, 7, 4);
+        } else if (this.type === 'virus') {
+            for(let i=0; i<6; i++) ctx.lineTo(this.radius * Math.cos(i*1.047), this.radius * Math.sin(i*1.047));
+            ctx.closePath();
+        } else {
+            ctx.arc(0, 0, this.radius, 0, 6.28);
+        }
+        ctx.fill();
+
+        if (this.type === 'fung' && !isPaused) {
+            ctx.strokeStyle = this.color; ctx.globalAlpha = 0.15;
+            ctx.beginPath(); ctx.arc(0,0, 30, 0, 6.28); ctx.stroke();
+            organisms.forEach(o => {
+                if (o !== this && o.type !== 'plant' && dist(this, o) < 30) { o.energy -= 5; this.energy += 2.5; }
+            });
+        }
+        ctx.restore();
+    }
+}
+
+document.getElementById('pauseBtn').onclick = (e) => {
+    isPaused = !isPaused;
+    e.target.className = isPaused ? 'paused' : 'running';
+    e.target.innerText = isPaused ? 'RESUME SIMULATION' : 'PAUSE SIMULATION';
+};
+
+document.querySelectorAll('.tool').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
+        selectedTool = { type: btn.dataset.type, sub: btn.dataset.sub };
+        btn.classList.add('active');
+    };
+});
+
+document.getElementById('btn-clear-orgs').onclick = () => organisms = [];
+document.getElementById('btn-clear-all').onclick = () => { organisms = []; foods = []; };
+
+canvas.onmousedown = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (selectedTool?.type === 'eraser') {
+        organisms = organisms.filter(o => dist({x,y}, o) > 20);
+        foods = foods.filter(f => dist({x,y}, f) > 20);
+    } else if (selectedTool) {
+        organisms.push(new Organism(x, y, selectedTool.type, selectedTool.sub));
+    }
+};
+
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!isPaused && Math.random() * 100 < getParam('foodR')) {
+        foods.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, isFood: true });
+    }
+
+    ctx.fillStyle = '#2c3e50';
+    foods.forEach(f => { ctx.beginPath(); ctx.arc(f.x, f.y, 2, 0, 6.28); ctx.fill(); });
+
+    for (let i = organisms.length - 1; i >= 0; i--) {
+        organisms[i].update();
+        organisms[i].draw();
+    }
+
+    organisms = organisms.filter(o => !o.dead);
+    foods = foods.filter(f => !f.dead);
+
+    stats.innerText = `Population: ${organisms.length} | Nutrients: ${foods.length} | ${isPaused ? 'PAUSED' : 'RUNNING'}`;
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
